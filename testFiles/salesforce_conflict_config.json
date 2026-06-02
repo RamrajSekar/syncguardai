@@ -1,0 +1,172 @@
+{
+  "metadataExport": {
+    "orgAlias": "qa-sandbox",
+    "apiVersion": "60.0",
+    "exportedAt": "2026-06-02T00:00:00Z",
+    "description": "Salesforce configuration metadata with deliberate conflicts for audit testing"
+  },
+  "objects": [
+    {
+      "apiName": "Lead",
+      "label": "Lead",
+      "fields": [
+        {
+          "apiName": "Status",
+          "type": "Picklist",
+          "required": true
+        },
+        {
+          "apiName": "Rating",
+          "type": "Picklist",
+          "required": false
+        },
+        {
+          "apiName": "OwnerId",
+          "type": "Lookup(User)",
+          "required": true
+        },
+        {
+          "apiName": "Lifecycle_Stage__c",
+          "type": "Picklist",
+          "required": false
+        },
+        {
+          "apiName": "Needs_Sales_Review__c",
+          "type": "Checkbox",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "validationRules": [
+    {
+      "fullName": "Lead.Require_Rating_When_SQL",
+      "object": "Lead",
+      "active": true,
+      "errorConditionFormula": "AND(ISPICKVAL(Status, 'SQL'), ISBLANK(TEXT(Rating)))",
+      "errorMessage": "Rating is required when Lead Status is SQL.",
+      "errorDisplayField": "Rating"
+    }
+  ],
+  "flows": [
+    {
+      "fullName": "Lead_Mark_SQL_For_High_Intent",
+      "label": "Lead - Mark SQL for High Intent",
+      "processType": "AutoLaunchedFlow",
+      "triggerType": "RecordAfterSave",
+      "object": "Lead",
+      "status": "Active",
+      "entryCriteria": "AND(ISCHANGED(Lifecycle_Stage__c), ISPICKVAL(Lifecycle_Stage__c, 'Sales Qualified'))",
+      "actions": [
+        {
+          "type": "UpdateRecords",
+          "targetObject": "Lead",
+          "fieldUpdates": [
+            {
+              "field": "Status",
+              "value": "SQL"
+            },
+            {
+              "field": "Needs_Sales_Review__c",
+              "value": false
+            }
+          ]
+        }
+      ],
+      "auditNote": "Updates Lead.Status to SQL without setting Rating, which conflicts with Lead.Require_Rating_When_SQL. Also updates the same Lead record in an after-save flow."
+    },
+    {
+      "fullName": "Lead_Reset_SQL_For_Unrated_Leads",
+      "label": "Lead - Reset SQL for Unrated Leads",
+      "processType": "AutoLaunchedFlow",
+      "triggerType": "RecordAfterSave",
+      "object": "Lead",
+      "status": "Active",
+      "entryCriteria": "AND(ISPICKVAL(Status, 'SQL'), ISBLANK(TEXT(Rating)))",
+      "actions": [
+        {
+          "type": "UpdateRecords",
+          "targetObject": "Lead",
+          "fieldUpdates": [
+            {
+              "field": "Status",
+              "value": "Working"
+            },
+            {
+              "field": "Needs_Sales_Review__c",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "auditNote": "Conflicts with Lead_Mark_SQL_For_High_Intent by changing the same Lead.Status field under overlapping conditions."
+    },
+    {
+      "fullName": "Lead_Reopen_When_Sales_Review_Checked",
+      "label": "Lead - Reopen When Sales Review Checked",
+      "processType": "AutoLaunchedFlow",
+      "triggerType": "RecordAfterSave",
+      "object": "Lead",
+      "status": "Active",
+      "entryCriteria": "Needs_Sales_Review__c = TRUE",
+      "actions": [
+        {
+          "type": "UpdateRecords",
+          "targetObject": "Lead",
+          "fieldUpdates": [
+            {
+              "field": "Lifecycle_Stage__c",
+              "value": "Sales Qualified"
+            }
+          ]
+        }
+      ],
+      "auditNote": "Creates a recursive loop path: Sales Qualified -> Status SQL -> unrated reset -> Needs Sales Review -> Sales Qualified."
+    }
+  ],
+  "apexTriggers": [
+    {
+      "fullName": "LeadStatusTrigger",
+      "object": "Lead",
+      "status": "Active",
+      "events": [
+        "after update"
+      ],
+      "handlerClass": "LeadStatusHandler",
+      "purpose": "When Status is SQL, assigns owner to sales queue and touches the same Lead record.",
+      "recursionGuard": false,
+      "fieldUpdates": [
+        {
+          "field": "OwnerId",
+          "value": "QUEUE_SALES_DEVELOPMENT"
+        },
+        {
+          "field": "Lifecycle_Stage__c",
+          "value": "Sales Qualified"
+        }
+      ],
+      "auditNote": "After-update trigger modifies the same record and re-enters Lead flows without a recursion guard."
+    }
+  ],
+  "auditExpectations": {
+    "expectedConflictCount": 4,
+    "expectedFindings": [
+      {
+        "type": "ValidationRuleConflict",
+        "description": "Active flow sets Lead.Status to SQL without populating required Rating."
+      },
+      {
+        "type": "SameFieldAutomationConflict",
+        "description": "Multiple active after-save flows update Lead.Status with competing values."
+      },
+      {
+        "type": "RecursiveFlowLoop",
+        "description": "Flows can cycle between Lifecycle_Stage__c, Status, and Needs_Sales_Review__c updates."
+      },
+      {
+        "type": "ApexTriggerRecursionRisk",
+        "description": "After-update Lead trigger updates the same record without a recursion guard."
+      }
+    ]
+  }
+}

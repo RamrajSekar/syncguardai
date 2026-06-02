@@ -1,0 +1,112 @@
+{
+  "metadataExport": {
+    "orgAlias": "dev-sandbox",
+    "apiVersion": "60.0",
+    "exportedAt": "2026-06-02T00:00:00Z",
+    "description": "Clean Salesforce configuration metadata for audit testing"
+  },
+  "objects": [
+    {
+      "apiName": "Opportunity",
+      "label": "Opportunity",
+      "fields": [
+        {
+          "apiName": "StageName",
+          "type": "Picklist",
+          "required": true
+        },
+        {
+          "apiName": "Amount",
+          "type": "Currency",
+          "required": false
+        },
+        {
+          "apiName": "CloseDate",
+          "type": "Date",
+          "required": true
+        },
+        {
+          "apiName": "Discount_Percent__c",
+          "type": "Percent",
+          "required": false
+        }
+      ]
+    },
+    {
+      "apiName": "Account",
+      "label": "Account",
+      "fields": [
+        {
+          "apiName": "Type",
+          "type": "Picklist",
+          "required": false
+        },
+        {
+          "apiName": "Customer_Status__c",
+          "type": "Picklist",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "validationRules": [
+    {
+      "fullName": "Opportunity.Require_Close_Date_For_Closed_Won",
+      "object": "Opportunity",
+      "active": true,
+      "errorConditionFormula": "AND(ISPICKVAL(StageName, 'Closed Won'), ISBLANK(CloseDate))",
+      "errorMessage": "Close Date is required when an opportunity is Closed Won.",
+      "errorDisplayField": "CloseDate"
+    },
+    {
+      "fullName": "Opportunity.Discount_Limit_For_Standard_User",
+      "object": "Opportunity",
+      "active": true,
+      "errorConditionFormula": "AND(Discount_Percent__c > 20, NOT($Permission.Approve_High_Discount))",
+      "errorMessage": "Discounts above 20% require approval permission.",
+      "errorDisplayField": "Discount_Percent__c"
+    }
+  ],
+  "flows": [
+    {
+      "fullName": "Opportunity_Update_Account_Status",
+      "label": "Opportunity - Update Account Status",
+      "processType": "AutoLaunchedFlow",
+      "triggerType": "RecordAfterSave",
+      "object": "Opportunity",
+      "status": "Active",
+      "entryCriteria": "AND(ISCHANGED(StageName), ISPICKVAL(StageName, 'Closed Won'))",
+      "actions": [
+        {
+          "type": "UpdateRecords",
+          "targetObject": "Account",
+          "lookupField": "AccountId",
+          "fieldUpdates": [
+            {
+              "field": "Customer_Status__c",
+              "value": "Active Customer"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "apexTriggers": [
+    {
+      "fullName": "OpportunityAuditTrigger",
+      "object": "Opportunity",
+      "status": "Active",
+      "events": [
+        "before insert",
+        "before update"
+      ],
+      "handlerClass": "OpportunityAuditHandler",
+      "purpose": "Normalize audit fields and perform non-recursive validation helper logic.",
+      "recursionGuard": true
+    }
+  ],
+  "auditExpectations": {
+    "expectedConflictCount": 0,
+    "expectedFindings": []
+  }
+}
