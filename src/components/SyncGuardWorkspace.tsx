@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { DropZone } from "@/components/DropZone";
 import { ReportPreview } from "@/components/ReportPreview";
 import type {
@@ -14,11 +14,14 @@ export function SyncGuardWorkspace() {
   const [reportMarkdown, setReportMarkdown] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const activeAuditRunId = useRef(0);
 
   const handleClearQueue = useCallback(() => {
+    activeAuditRunId.current += 1;
     setFiles([]);
     setReportMarkdown("");
     setError(null);
+    setIsLoading(false);
   }, []);
 
   const handleRunAudit = useCallback(async () => {
@@ -28,6 +31,8 @@ export function SyncGuardWorkspace() {
 
     setIsLoading(true);
     setError(null);
+    const auditRunId = activeAuditRunId.current + 1;
+    activeAuditRunId.current = auditRunId;
 
     try {
       const filesForAudit: AuditFilePayload[] = files.map((file) => ({
@@ -52,15 +57,21 @@ export function SyncGuardWorkspace() {
         throw new Error(payload.error || "SyncGuard audit failed.");
       }
 
-      setReportMarkdown(payload.reportMarkdown || "");
+      if (activeAuditRunId.current === auditRunId) {
+        setReportMarkdown(payload.reportMarkdown || "");
+      }
     } catch (caughtError) {
-      setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "SyncGuard audit failed."
-      );
+      if (activeAuditRunId.current === auditRunId) {
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "SyncGuard audit failed."
+        );
+      }
     } finally {
-      setIsLoading(false);
+      if (activeAuditRunId.current === auditRunId) {
+        setIsLoading(false);
+      }
     }
   }, [files, isLoading]);
 

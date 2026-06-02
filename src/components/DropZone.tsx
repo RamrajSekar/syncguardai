@@ -247,7 +247,7 @@ export function DropZone({
         <button
           className="rounded-lg border border-slate-300 bg-white px-5 py-3 font-medium text-slate-700 shadow-sm transition-all hover:border-slate-400 hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none disabled:active:scale-100"
           type="button"
-          disabled={!canClearQueue || isLoading}
+          disabled={!canClearQueue}
           onClick={() => {
             setUploadError(null);
             onClearQueue();

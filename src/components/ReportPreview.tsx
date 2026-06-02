@@ -4,6 +4,7 @@ type RiskLevel = "high" | "medium" | "low";
 type UploadQueueContext = "salesforce-only" | "hubspot-only" | "cross-system";
 
 interface RiskCard {
+  id: string;
   level: RiskLevel;
   title: string;
   description: string;
@@ -16,16 +17,19 @@ interface ReportPreviewProps {
 
 const defaultRiskCards: RiskCard[] = [
   {
+    id: "default-high",
     level: "high",
     title: "Schema drift detected",
     description: "Payment export fields do not match the expected CRM import map."
   },
   {
+    id: "default-medium",
     level: "medium",
     title: "Manual approval needed",
     description: "Two nullable columns require owner confirmation before sync."
   },
   {
+    id: "default-low",
     level: "low",
     title: "Ready for dry run",
     description: "Sanitized payload is valid for stateless audit processing."
@@ -215,7 +219,7 @@ function parseRiskCards(markdown: string): RiskCard[] {
     return defaultRiskCards;
   }
 
-  const cards = parseReportSections(markdown).flatMap((section) => {
+  const cards = parseReportSections(markdown).flatMap((section, index) => {
     const lines = section.split("\n").filter((line) => line.trim().length > 0);
     const riskLevel = detectSectionRiskLevel(section);
 
@@ -225,6 +229,7 @@ function parseRiskCards(markdown: string): RiskCard[] {
 
     return [
       {
+        id: `risk-card-${index}-${riskLevel}`,
         level: riskLevel,
         title: cleanMarkdownLine(lines[0] || riskStyles[riskLevel].label),
         description: extractDescription(lines.slice(1))
@@ -238,6 +243,7 @@ function parseRiskCards(markdown: string): RiskCard[] {
 function getHighRiskQueueCopy(context: UploadQueueContext): RiskCard {
   if (context === "salesforce-only") {
     return {
+      id: "system-salesforce-high",
       level: "high",
       title: "Internal Salesforce Logic Risk Detected",
       description:
@@ -247,6 +253,7 @@ function getHighRiskQueueCopy(context: UploadQueueContext): RiskCard {
 
   if (context === "hubspot-only") {
     return {
+      id: "system-hubspot-high",
       level: "high",
       title: "Internal HubSpot Automation Risk Detected",
       description:
@@ -255,6 +262,7 @@ function getHighRiskQueueCopy(context: UploadQueueContext): RiskCard {
   }
 
   return {
+    id: "system-cross-system-high",
     level: "high",
     title: "Critical risk",
     description:
@@ -291,6 +299,7 @@ function getSystemRiskSummary(
   if (highestRiskLevel === "medium") {
     return {
       level: "medium",
+      id: "system-medium",
       title: fallbackTitle || "System warning",
       description:
         fallbackDescription ||
@@ -301,6 +310,7 @@ function getSystemRiskSummary(
   if (highestRiskLevel === "low") {
     return {
       level: "low",
+      id: "system-low",
       title: fallbackTitle || "System validation ready",
       description:
         fallbackDescription ||
@@ -418,7 +428,7 @@ export function ReportPreview({
 
       <div className="flex flex-col gap-3">
         {riskCards.map((card) => (
-          <RiskSummaryCard card={card} key={`${card.level}-${card.title}`} />
+          <RiskSummaryCard card={card} key={card.id} />
         ))}
       </div>
 
