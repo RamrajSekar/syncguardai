@@ -74,6 +74,15 @@ function getTotalContentLength(files: UploadedFile[]): number {
   return files.reduce((total, file) => total + file.content.length, 0);
 }
 
+function createUploadId(file: File): string {
+  const randomPart =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return `${file.name}-${file.size}-${randomPart}`;
+}
+
 export function DropZone({
   files,
   isLoading,
@@ -106,7 +115,7 @@ export function DropZone({
         const sanitizedText = scrubPiiFromText(rawText);
 
         return {
-          id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
+          id: createUploadId(file),
           name: file.name,
           size: file.size,
           type: file.type || "text/plain",
