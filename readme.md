@@ -4,6 +4,13 @@
 
 SyncGuard AI is a lightweight, stateless utility designed to audit configuration rules, workflows, and schemas before they are deployed to production. It acts as an automated QA engineer for Revenue Operations (RevOps), identifying internal logic conflicts and cross-platform sync friction before they cause silent data crashes or validation failures.
 
+## 🔒 Enterprise Security & Data Privacy
+
+SyncGuard AI is built from the ground up to respect enterprise data sovereignty and security boundaries. We do not require connection to a live production environment or persistence of your metadata.
+
+* **Stateless Architecture:** SyncGuard AI is completely stateless. No uploaded configuration files, JSON payloads, or Salesforce metadata structures are ever saved, cached, or persisted on our servers or databases. Data lives strictly in-memory during processing and vanishes upon session closure.
+* **Encryption in Transit:** All communications between the frontend UI, backend services, and API endpoints are fully encrypted using standard SSL/TLS (HTTPS) protocols. Your data travels through a secure cryptographic tunnel.
+* **Zero Model Training:** AI-driven logic analysis is performed exclusively through secure enterprise-grade API endpoints. In strict compliance with OpenAI’s data privacy policies, data submitted via the API is **never** used for model training, improvement, or log retention.
 ---
 
 ## 🎯 What Problem Does This Solve?
