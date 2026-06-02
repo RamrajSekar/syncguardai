@@ -12,16 +12,67 @@ interface NormalizedAuditFile {
   content: string;
 }
 
+type AuditScenario =
+  | "salesforce-only"
+  | "hubspot-only"
+  | "cross-system";
+
+interface AuditScenarioConfig {
+  modeName: string;
+  summaryTitle: string;
+  summaryDescription: string;
+  directive: string;
+}
+
 const MODEL_NAME = "gpt-4o-mini";
 const MAX_PAYLOAD_SIZE_BYTES = 1024 * 1024;
 
-const systemPrompt = `
-You are SyncGuard AI, an elite Salesforce Testing and RevOps Automation Architect.
+const scenarioConfigs: Record<AuditScenario, AuditScenarioConfig> = {
+  "salesforce-only": {
+    modeName: "Salesforce Configuration Guard",
+    summaryTitle: "Internal Salesforce Logic Risk Detected",
+    summaryDescription:
+      "Internal Salesforce validation logic, formulas, or order-of-execution constraints may block user data entry or automation outcomes.",
+    directive: `
+You are SyncGuard AI, an elite Salesforce Testing and RevOps Automation Architect operating in Salesforce Configuration Guard mode.
 
-Analyze sanitized Salesforce configuration exports, CRM mapping files, CSVs,
-JSON structures, TXT notes, and XML metadata for integration drift, field
-mapping gaps, type mismatches, validation walls, automation conflicts, and
-sync-blocking risks.
+Analyze only internal Salesforce architecture. Drop all mentions of
+integrations, HubSpot properties, HubSpot workflows, sync rules, and external
+platform dependencies. Focus 100% of the markdown analysis on Salesforce
+configuration health: audit validation rule formulas for logical constraints,
+assess evaluation criteria for order-of-execution bottlenecks, evaluate
+user-experience friction based on error messages, and flag data-entry traps for
+standard users.
+`.trim()
+  },
+  "hubspot-only": {
+    modeName: "HubSpot Workflow Guard",
+    summaryTitle: "Internal HubSpot Automation Risk Detected",
+    summaryDescription:
+      "Internal HubSpot workflow triggers, action steps, or property update logic may create automation risk before data leaves HubSpot.",
+    directive: `
+You are SyncGuard AI, an elite HubSpot Workflow and RevOps Automation Architect operating in HubSpot Workflow Guard mode.
+
+Analyze only internal HubSpot automation health. Drop all mentions of
+Salesforce fields, Salesforce validation rules, sync failures, and destination
+CRM constraints. Focus 100% of the markdown analysis on HubSpot workflow
+behavior: audit workflow triggers for potential runaway loops, check action
+steps for data formatting issues, flag missing required criteria before
+property updates, and highlight optimization opportunities.
+`.trim()
+  },
+  "cross-system": {
+    modeName: "Cross-System Sync Audit",
+    summaryTitle: "Cross-System Logic Conflict Detected",
+    summaryDescription:
+      "Cross-system logic conflict detected between your workflow automation and destination validation rules.",
+    directive: `
+You are SyncGuard AI, an elite Salesforce Testing and RevOps Automation Architect operating in Cross-System Sync Audit mode.
+
+Analyze sanitized Salesforce configuration exports, HubSpot workflow exports,
+CRM mapping files, CSVs, JSON structures, TXT notes, and XML metadata for
+integration drift, field mapping gaps, type mismatches, validation walls,
+automation conflicts, and sync-blocking risks.
 
 When evaluating configurations, you must strictly trace field dependencies
 across both systems using the provided mapping file. Specifically:
@@ -33,6 +84,17 @@ across both systems using the provided mapping file. Specifically:
    validation rules, evaluation criteria, and formulas to proactively catch
    silent API sync failures, validation walls, or logic blocks before they
    happen.
+`.trim()
+  }
+};
+
+const responseFormatPrompt = `
+Your response must be direct, concise markdown and must use explicit
+parser-friendly metadata before every issue block:
+
+- Audit Mode: [Salesforce Configuration Guard / HubSpot Workflow Guard / Cross-System Sync Audit]
+- System Summary: [mode-specific global summary title]
+- System Assessment: [one sentence explaining the highest risk across the whole upload set]
 
 Your response must be markdown and must use explicit parser-friendly risk
 identifiers for every distinct issue or validation result. Format each block
@@ -78,6 +140,85 @@ function getFileExtension(filename: string, fallbackType: string): string {
   return fallbackType || "unknown";
 }
 
+function includesAnySignal(text: string, signals: string[]): boolean {
+  const normalizedText = text.toLowerCase();
+
+  return signals.some((signal) => normalizedText.includes(signal));
+}
+
+/**
+ * Routes the audit into single-platform or cross-system mode using lightweight
+ * filename/content signals only. The upload remains stateless and in memory.
+ */
+function detectAuditScenario(files: NormalizedAuditFile[]): AuditScenario {
+  const combinedText = files
+    .map((file) => `${file.filename}\n${file.content}`)
+    .join("\n")
+    .toLowerCase();
+
+  const hasSalesforce = includesAnySignal(combinedText, [
+    "salesforce",
+    "sfdc",
+    "validationrule",
+    "validation rule",
+    "customobject",
+    "customfield",
+    "trigger",
+    "apex",
+    "flowdefinition",
+    "workflowrule",
+    ".object",
+    ".field"
+  ]);
+  const hasHubSpot = includesAnySignal(combinedText, [
+    "hubspot",
+    "hs_",
+    "workflow",
+    "property",
+    "dealstage",
+    "lifecyclestage",
+    "pipeline",
+    "enrollment",
+    "trigger criteria"
+  ]);
+  const hasMapping = includesAnySignal(combinedText, [
+    "mapping",
+    "maps to",
+    "source field",
+    "destination field",
+    "salesforce field",
+    "hubspot property",
+    "crm map"
+  ]);
+
+  if (hasSalesforce && hasHubSpot && hasMapping) {
+    return "cross-system";
+  }
+
+  if (hasSalesforce && !hasHubSpot) {
+    return "salesforce-only";
+  }
+
+  if (hasHubSpot && !hasSalesforce) {
+    return "hubspot-only";
+  }
+
+  return hasSalesforce && hasHubSpot ? "cross-system" : "salesforce-only";
+}
+
+function buildSystemPrompt(scenario: AuditScenario): string {
+  const config = scenarioConfigs[scenario];
+
+  return [
+    config.directive,
+    responseFormatPrompt,
+    `For this request, use exactly this metadata:
+- Audit Mode: ${config.modeName}
+- System Summary: ${config.summaryTitle}
+- System Assessment: ${config.summaryDescription}`
+  ].join("\n\n");
+}
+
 /**
  * Normalizes flexible frontend payload keys into the server-only shape sent to
  * the AI provider, while preserving stateless memory pass-through behavior.
@@ -110,7 +251,11 @@ function getTotalContentLength(files: NormalizedAuditFile[]): number {
  * Builds the model input from already-sanitized file strings. Raw browser
  * uploads should never reach this route without first passing the client scrubber.
  */
-function buildUserPrompt(files: NormalizedAuditFile[]): string {
+function buildUserPrompt(
+  files: NormalizedAuditFile[],
+  scenario: AuditScenario
+): string {
+  const config = scenarioConfigs[scenario];
   const fileBlocks = files
     .map(
       (file) => `Filename: ${file.filename}
@@ -122,7 +267,7 @@ ${file.content}
     )
     .join("\n\n---\n\n");
 
-  return `Audit the following sanitized file payloads and produce the required SyncGuard markdown report.\n\n${fileBlocks}`;
+  return `Audit mode: ${config.modeName}\n\nAudit the following sanitized file payloads and produce the required SyncGuard markdown report.\n\n${fileBlocks}`;
 }
 
 /**
@@ -183,17 +328,18 @@ export async function POST(request: NextRequest) {
     }
 
     const openai = new OpenAI();
+    const auditScenario = detectAuditScenario(files);
 
     const completion = await openai.chat.completions.create({
       model: MODEL_NAME,
       messages: [
         {
           role: "system",
-          content: systemPrompt
+          content: buildSystemPrompt(auditScenario)
         },
         {
           role: "user",
-          content: buildUserPrompt(files)
+          content: buildUserPrompt(files, auditScenario)
         }
       ],
       max_tokens: 2000,

@@ -1,10 +1,18 @@
-type RiskLevel = "high" | "medium" | "low";
+import type { UploadedFile } from "@/types/audit";
 
-type RiskCard = {
+type RiskLevel = "high" | "medium" | "low";
+type UploadQueueContext = "salesforce-only" | "hubspot-only" | "cross-system";
+
+interface RiskCard {
   level: RiskLevel;
   title: string;
   description: string;
-};
+}
+
+interface ReportPreviewProps {
+  reportMarkdown: string;
+  uploadedFiles: UploadedFile[];
+}
 
 const defaultRiskCards: RiskCard[] = [
   {
@@ -45,11 +53,105 @@ const riskStyles: Record<
   }
 };
 
-type ReportPreviewProps = {
-  reportMarkdown: string;
+const riskPriority: Record<RiskLevel, number> = {
+  high: 3,
+  medium: 2,
+  low: 1
 };
 
-function detectRiskLevel(text: string): RiskLevel | null {
+function includesAnySignal(text: string, signals: string[]): boolean {
+  const normalizedText = text.toLowerCase();
+
+  return signals.some((signal) => normalizedText.includes(signal));
+}
+
+function detectUploadQueueContext(files: UploadedFile[]): UploadQueueContext {
+  const combinedText = files
+    .map((file) => `${file.name}\n${file.type}\n${file.content}`)
+    .join("\n");
+  const hasMapping = includesAnySignal(combinedText, [
+    "mapping",
+    "maps to",
+    "source field",
+    "destination field",
+    "salesforce field",
+    "hubspot property",
+    "crm map"
+  ]);
+  const hasSalesforce = includesAnySignal(combinedText, [
+    "salesforce",
+    "sfdc",
+    "vr_",
+    "ischanged",
+    "validationrule",
+    "validation rule",
+    "customobject",
+    "customfield",
+    "apex",
+    "flowdefinition"
+  ]);
+  const hasHubSpot = includesAnySignal(combinedText, [
+    "hubspot",
+    "hs_",
+    "workflow",
+    "property",
+    "dealstage",
+    "lifecyclestage",
+    "enrollment",
+    "trigger criteria"
+  ]);
+
+  if (hasMapping || (hasSalesforce && hasHubSpot)) {
+    return "cross-system";
+  }
+
+  if (hasSalesforce) {
+    return "salesforce-only";
+  }
+
+  if (hasHubSpot) {
+    return "hubspot-only";
+  }
+
+  return "cross-system";
+}
+
+function detectHighestRiskLevel(text: string): RiskLevel | null {
+  const detectedLevels: RiskLevel[] = [];
+
+  if (
+    /\b(HIGH RISK|CRITICAL SYNC|CRITICAL|VALIDATION WALL|LOGIC BLOCK)\b/i.test(
+      text
+    ) ||
+    /\bRisk:\s*high\b/i.test(text)
+  ) {
+    detectedLevels.push("high");
+  }
+
+  if (
+    /\b(MEDIUM RISK|WARNING|WARN|MANUAL REVIEW)\b/i.test(text) ||
+    /\bRisk:\s*medium\b/i.test(text)
+  ) {
+    detectedLevels.push("medium");
+  }
+
+  if (
+    /\b(LOW RISK|VALIDATION SUCCESS|SUCCESS|READY)\b/i.test(text) ||
+    /\bRisk:\s*low\b/i.test(text)
+  ) {
+    detectedLevels.push("low");
+  }
+
+  return detectedLevels.reduce<RiskLevel | null>((highestLevel, level) => {
+    if (!highestLevel || riskPriority[level] > riskPriority[highestLevel]) {
+      return level;
+    }
+
+    return highestLevel;
+  }, null);
+}
+
+function detectSectionRiskLevel(text: string): RiskLevel | null {
   if (/\b(HIGH RISK|CRITICAL SYNC|CRITICAL)\b/i.test(text)) {
     return "high";
   }
@@ -96,19 +198,26 @@ function extractDescription(lines: string[]): string {
   );
 }
 
+function parseReportSections(markdown: string): string[] {
+  return markdown
+    .split(/\n(?=#{2,3}\s+)/)
+    .map((section) => section.trim())
+    .filter(
+      (section) =>
+        section.length > 0 &&
+        !/^#\s+/i.test(section) &&
+        !/^#{2,3}\s*Remediation Guide/i.test(section)
+    );
+}
+
 function parseRiskCards(markdown: string): RiskCard[] {
   if (!markdown.trim()) {
     return defaultRiskCards;
   }
 
-  const sections = markdown
-    .split(/\n(?=##\s+)/)
-    .map((section) => section.trim())
-    .filter(Boolean);
-
-  const cards = sections.flatMap((section) => {
+  const cards = parseReportSections(markdown).flatMap((section) => {
     const lines = section.split("\n").filter((line) => line.trim().length > 0);
-    const riskLevel = detectRiskLevel(section);
+    const riskLevel = detectSectionRiskLevel(section);
 
     if (!riskLevel) {
       return [];
@@ -124,6 +233,82 @@ function parseRiskCards(markdown: string): RiskCard[] {
   });
 
   return cards.length > 0 ? cards : defaultRiskCards;
+}
+
+function getHighRiskQueueCopy(context: UploadQueueContext): RiskCard {
+  if (context === "salesforce-only") {
+    return {
+      level: "high",
+      title: "Internal Salesforce Logic Risk Detected",
+      description:
+        "Validation formula or constraint risks identified within your native Salesforce configuration."
+    };
+  }
+
+  if (context === "hubspot-only") {
+    return {
+      level: "high",
+      title: "Internal HubSpot Automation Risk Detected",
+      description:
+        "Potential runaway loops or action logic risks identified within your native HubSpot workflows."
+    };
+  }
+
+  return {
+    level: "high",
+    title: "Critical risk",
+    description:
+      "Cross-system logic conflict detected between your workflow automation and destination validation rules."
+  };
+}
+
+function getSystemRiskSummary(
+  markdown: string,
+  uploadQueueContext: UploadQueueContext
+): RiskCard | null {
+  if (!markdown.trim()) {
+    return null;
+  }
+
+  const highestRiskLevel = detectHighestRiskLevel(markdown);
+  const summaryMatch = markdown.match(/^- System Summary:\s*(.+)$/im);
+  const assessmentMatch = markdown.match(/^- System Assessment:\s*(.+)$/im);
+  const fallbackTitle =
+    summaryMatch?.[1]?.trim() ||
+    (markdown.match(/^- Audit Mode:\s*(.+)$/im)?.[1]?.trim() ?? null);
+  const fallbackDescription = assessmentMatch?.[1]?.trim();
+
+  if (highestRiskLevel === "high") {
+    const queueCopy = getHighRiskQueueCopy(uploadQueueContext);
+
+    return {
+      ...queueCopy,
+      title: queueCopy.title || fallbackTitle || "Critical risk",
+      description: queueCopy.description || fallbackDescription || ""
+    };
+  }
+
+  if (highestRiskLevel === "medium") {
+    return {
+      level: "medium",
+      title: fallbackTitle || "System warning",
+      description:
+        fallbackDescription ||
+        "Potential mapping drift or review-dependent automation behavior was detected across the audited configuration set."
+    };
+  }
+
+  if (highestRiskLevel === "low") {
+    return {
+      level: "low",
+      title: fallbackTitle || "System validation ready",
+      description:
+        fallbackDescription ||
+        "No critical cross-system sync blockers were identified in the uploaded audit set."
+    };
+  }
+
+  return null;
 }
 
 function RiskSummaryCard({ card }: { card: RiskCard }) {
@@ -142,6 +327,21 @@ function RiskSummaryCard({ card }: { card: RiskCard }) {
   );
 }
 
+function SystemRiskSummaryCard({ summary }: { summary: RiskCard }) {
+  const styles = riskStyles[summary.level];
+  const label = summary.level === "high" ? "Critical risk" : styles.label;
+
+  return (
+    <article className={`rounded-md border p-5 ${styles.className}`}>
+      <p className="text-xs font-bold uppercase tracking-[0.12em]">{label}</p>
+      <h3 className={`mt-2 text-lg font-semibold ${styles.headingClassName}`}>
+        {summary.title}
+      </h3>
+      <p className="mt-2 text-sm leading-6">{summary.description}</p>
+    </article>
+  );
+}
+
 function MarkdownDetails({ markdown }: { markdown: string }) {
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
@@ -156,7 +356,7 @@ function MarkdownDetails({ markdown }: { markdown: string }) {
           );
         }
 
-        if (line.startsWith("## ")) {
+        if (line.startsWith("## ") || line.startsWith("### ")) {
           return (
             <h4
               className="mt-4 border-t border-slate-200 pt-4 font-semibold text-slate-900 first:mt-0 first:border-t-0 first:pt-0"
@@ -186,7 +386,15 @@ function MarkdownDetails({ markdown }: { markdown: string }) {
   );
 }
 
-export function ReportPreview({ reportMarkdown }: ReportPreviewProps) {
+export function ReportPreview({
+  reportMarkdown,
+  uploadedFiles
+}: ReportPreviewProps) {
+  const uploadQueueContext = detectUploadQueueContext(uploadedFiles);
+  const systemRiskSummary = getSystemRiskSummary(
+    reportMarkdown,
+    uploadQueueContext
+  );
   const riskCards = parseRiskCards(reportMarkdown);
 
   return (
@@ -203,6 +411,10 @@ export function ReportPreview({ reportMarkdown }: ReportPreviewProps) {
           color-coded risk summaries.
         </p>
       </div>
+
+      {systemRiskSummary ? (
+        <SystemRiskSummaryCard summary={systemRiskSummary} />
+      ) : null}
 
       <div className="flex flex-col gap-3">
         {riskCards.map((card) => (

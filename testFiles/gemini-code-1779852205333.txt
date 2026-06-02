@@ -1,0 +1,4 @@
+Rule Name: VR_Lead_Requires_Phone_for_SQL
+Evaluation Criteria: IsChanged(Status) && Text(Status) == "SQL"
+Error Condition Formula: IsBlank(Phone)
+Error Message: "You cannot mark a lead as an SQL without a valid phone number."

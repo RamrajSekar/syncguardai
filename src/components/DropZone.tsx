@@ -10,6 +10,7 @@ interface DropZoneProps {
   auditError: string | null;
   onFilesChange: (files: UploadedFile[]) => void;
   onRunAudit: () => void;
+  onClearQueue: () => void;
 }
 
 interface AcceptedFileTypes {
@@ -17,7 +18,8 @@ interface AcceptedFileTypes {
   mimeTypes: string[];
 }
 
-const MAX_UPLOAD_QUEUE_SIZE_BYTES = 1024 * 1024;
+const MAX_SINGLE_FILE_SIZE = 1 * 1024 * 1024;
+const MAX_TOTAL_QUEUE_SIZE = 1.5 * 1024 * 1024;
 
 const acceptedFileTypes: AcceptedFileTypes = {
   extensions: [".csv", ".json", ".txt", ".xml"],
@@ -58,20 +60,8 @@ function isAcceptedFile(file: File): boolean {
   );
 }
 
-function getUploadQueuePayloadSizeBytes(files: UploadedFile[]): number {
-  return new TextEncoder().encode(
-    JSON.stringify(
-      files.map((file) => ({
-        name: file.name,
-        fileType: file.type,
-        content: file.content
-      }))
-    )
-  ).byteLength;
-}
-
-function getTotalContentLength(files: UploadedFile[]): number {
-  return files.reduce((total, file) => total + file.content.length, 0);
+function getTotalQueuedFileSize(files: UploadedFile[]): number {
+  return files.reduce((total, file) => total + file.size, 0);
 }
 
 function createUploadId(file: File): string {
@@ -88,7 +78,8 @@ export function DropZone({
   isLoading,
   auditError,
   onFilesChange,
-  onRunAudit
+  onRunAudit,
+  onClearQueue
 }: DropZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -102,6 +93,30 @@ export function DropZone({
     setUploadError(null);
 
     const nextFiles = Array.from(fileList);
+    const oversizedFile = nextFiles.find(
+      (file) => file.size > MAX_SINGLE_FILE_SIZE
+    );
+
+    if (oversizedFile) {
+      setUploadError(
+        `\u26A0\uFE0F File too large: ${oversizedFile.name} exceeds the 1MB budget limit. Please upload structural configuration metadata chunks only.`
+      );
+      return;
+    }
+
+    const existingQueueSize = getTotalQueuedFileSize(files);
+    const incomingBatchSize = nextFiles.reduce(
+      (total, file) => total + file.size,
+      0
+    );
+
+    if (existingQueueSize + incomingBatchSize > MAX_TOTAL_QUEUE_SIZE) {
+      setUploadError(
+        "\u26A0\uFE0F Batch upload limit exceeded: The combined size of your selected configuration files exceeds the 1.5MB maximum. Please optimize your metadata or clear your current queue before uploading more files."
+      );
+      return;
+    }
+
     const unsupportedFile = nextFiles.find((file) => !isAcceptedFile(file));
 
     if (unsupportedFile) {
@@ -125,20 +140,11 @@ export function DropZone({
       })
     );
 
-    const nextQueue = [...files, ...sanitizedFiles];
-
-    if (
-      getTotalContentLength(nextQueue) > MAX_UPLOAD_QUEUE_SIZE_BYTES ||
-      getUploadQueuePayloadSizeBytes(nextQueue) > MAX_UPLOAD_QUEUE_SIZE_BYTES
-    ) {
-      setUploadError("Payload exceeds maximum beta limit of 1MB.");
-      return;
-    }
-
-    onFilesChange(nextQueue);
+    onFilesChange([...files, ...sanitizedFiles]);
   }, [files, onFilesChange]);
 
   const canRunAudit = files.length > 0 && !isLoading;
+  const canClearQueue = files.length > 0 || Boolean(auditError);
 
   return (
     <section className="flex flex-col gap-4">
@@ -175,7 +181,9 @@ export function DropZone({
             Drop CSV, JSON, TXT, or XML files here
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Multiple files are supported. File contents are scrubbed locally before they are ready for audit processing.
+            Multiple files are supported. Each file must be 1MB or less, with a
+            1.5MB total queue limit. File contents are scrubbed locally before
+            they are ready for audit processing.
           </p>
         </div>
         <button
@@ -235,7 +243,18 @@ export function DropZone({
         )}
       </div>
 
-      <div className="flex flex-col items-center gap-3">
+      <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+        <button
+          className="rounded-lg border border-slate-300 bg-white px-5 py-3 font-medium text-slate-700 shadow-sm transition-all hover:border-slate-400 hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none disabled:active:scale-100"
+          type="button"
+          disabled={!canClearQueue || isLoading}
+          onClick={() => {
+            setUploadError(null);
+            onClearQueue();
+          }}
+        >
+          Clear Queue
+        </button>
         <button
           className="rounded-lg bg-emerald-600 px-6 py-3 font-medium text-white shadow-md transition-all hover:bg-emerald-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none disabled:hover:bg-slate-300 disabled:active:scale-100"
           type="button"
@@ -251,6 +270,8 @@ export function DropZone({
             "Run SyncGuard Audit"
           )}
         </button>
+      </div>
+      <div className="flex justify-center">
         {auditError ? (
           <p className="max-w-md text-center text-sm font-medium text-red-700">
             {auditError}

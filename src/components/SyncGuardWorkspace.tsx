@@ -15,6 +15,12 @@ export function SyncGuardWorkspace() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handleClearQueue = useCallback(() => {
+    setFiles([]);
+    setReportMarkdown("");
+    setError(null);
+  }, []);
+
   const handleRunAudit = useCallback(async () => {
     if (files.length === 0 || isLoading) {
       return;
@@ -66,8 +72,9 @@ export function SyncGuardWorkspace() {
         auditError={error}
         onFilesChange={setFiles}
         onRunAudit={handleRunAudit}
+        onClearQueue={handleClearQueue}
       />
-      <ReportPreview reportMarkdown={reportMarkdown} />
+      <ReportPreview reportMarkdown={reportMarkdown} uploadedFiles={files} />
     </div>
   );
 }

@@ -1,0 +1,3 @@
+HubSpot_Property,Salesforce_Field,Sync_Direction
+Lead_Status,Status,Bi-Directional
+Lifecycle_Stage,LifecycleStage__c,HubSpot_to_Salesforce

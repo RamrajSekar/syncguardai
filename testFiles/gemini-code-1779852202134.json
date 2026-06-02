@@ -1,0 +1,7 @@
+{
+  "workflowName": "MQL to SQL Promotion",
+  "trigger": "Form Submission",
+  "actions": [
+    { "type": "SET_PROPERTY", "property": "Lead_Status", "value": "SQL" }
+  ]
+}
